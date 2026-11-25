@@ -53,6 +53,7 @@ comida:         .word 0             # celula onde esta a comida
 pontos:         .word 0             # pontuacao do jogador
 recorde:        .word 0
 msg_recorde:    .asciiz " | Maior Recorde: "
+turbo_timer:    .word 0             # NOVO: contador de passos no modo turbo
 
 msg_abertura:   .asciiz "=== PROJETO SNAKE - MIPS ===\nTeclas: W (cima)  A (esquerda)  S (baixo)  D (direita)\nAbra o Bitmap Display (16x16, 512x512, base 0x10010000) e o\nKeyboard and Display MMIO Simulator, clique na caixa de entrada\ne pressione uma tecla para comecar.\n"
 msg_fim:        .asciiz "\nFIM DE JOGO! Pontuacao final: "
@@ -218,29 +219,37 @@ nc_sorteia:
                 jr      $ra
 
 #===============================================================================
-# esperar_passo - espera 0,5 s divididos em 25 fatias de 20 ms, lendo o
-#                 teclado a cada fatia (assim nenhuma tecla se perde)
+# esperar_passo - espera 0,5 s (ou menos se o turbo estiver ativo)
 #===============================================================================
 esperar_passo:
-                addiu   $sp, $sp, -8
-                sw      $ra, 0($sp)
-                sw      $s0, 4($sp)
+            addiu   $sp, $sp, -8
+            sw      $ra, 0($sp)
+            sw      $s0, 4($sp)
 
-                li      $s0, 25
+            lw      $t0, turbo_timer
+            blez    $t0, ep_normal
+            
+            # --- Modo Turbo ---
+            addiu   $t0, $t0, -1            # gasta 1 passo do turbo
+            sw      $t0, turbo_timer
+            li      $s0, 4                  # 4 fatias = 80 ms (super rapido)
+            j       ep_loop
+ep_normal:
+            li      $s0, 25                 # 25 fatias = 500 ms (normal)
 ep_loop:
-                jal     ler_teclado
-                li      $v0, 32
-                li      $a0, 20
-                syscall
-                addiu   $s0, $s0, -1
-                bgtz    $s0, ep_loop
+            jal     ler_teclado
+            li      $v0, 32
+            li      $a0, 20
+            syscall
+            addiu   $s0, $s0, -1
+            bgtz    $s0, ep_loop
 
-                jal     ler_teclado             # pega o que chegou na ultima fatia
+            jal     ler_teclado             # pega o que chegou na ultima fatia
 
-                lw      $ra, 0($sp)
-                lw      $s0, 4($sp)
-                addiu   $sp, $sp, 8
-                jr      $ra
+            lw      $ra, 0($sp)
+            lw      $s0, 4($sp)
+            addiu   $sp, $sp, 8
+            jr      $ra
 
 #===============================================================================
 # ler_teclado - consome todas as teclas pendentes no MMIO (0xffff0000) e
@@ -251,17 +260,17 @@ ler_teclado:
                 li      $v0, 0
                 li      $t0, 0xffff0000         # controle do receptor
 lk_poll:
-                lw      $t1, 0($t0)
-                andi    $t1, $t1, 1             # bit 0 = tem caractere pronto?
-                beqz    $t1, lk_ret
-                lw      $t2, 4($t0)             # le o caractere (limpa o bit)
+            lw      $t1, 0($t0)
+            andi    $t1, $t1, 1             # bit 0 = tem caractere pronto?
+            beqz    $t1, lk_ret
+            lw      $t2, 4($t0)             # le o caractere (limpa o bit)
 
-                # --- converte maiuscula em minuscula ---
-                li      $t3, 65                 # 'A'
-                blt     $t2, $t3, lk_compara
-                li      $t3, 90                 # 'Z'
-                bgt     $t2, $t3, lk_compara
-                addiu   $t2, $t2, 32
+            # --- NOVO: Verifica se e a Barra de Espaco (Turbo) ---
+            li      $t3, 32                 # ASCII 32 = Espaco
+            beq     $t2, $t3, lk_turbo
+
+            # --- converte maiuscula em minuscula ---
+            li      $t3, 65                 # 'A'
 lk_compara:
                 li      $t3, 119                # 'w' -> cima
                 beq     $t2, $t3, lk_cima
@@ -298,12 +307,20 @@ lk_aplica:
                 bnez    $t9, lk_aceita
                 j       lk_poll                 # comando invalido: descarta
 lk_aceita:
-                sw      $t4, dir_x
-                sw      $t5, dir_y
-                li      $v0, 1
-                j       lk_poll
+            sw      $t4, dir_x
+            sw      $t5, dir_y
+            li      $v0, 1
+            j       lk_poll
+            
+# --- NOVO: Aplica o Turbo ---
+lk_turbo:
+            li      $t3, 5                  # Ativa velocidade por 5 passos
+            sw      $t3, turbo_timer
+            j       lk_poll                 # Volta a ler caso tenha mais teclas
+            
 lk_ret:
-                jr      $ra
+            jr      $ra
+
 
 #===============================================================================
 # mover - executa um passo da cobra.
